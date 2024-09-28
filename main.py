@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
-import pymongo
+from fastapi import FastAPI, HTTPException, Query
 from pymongo import MongoClient
 from pydantic import BaseModel
 from enum import Enum
 from typing import List
+from bson import ObjectId
+
 
 ### Database connection ###
 
@@ -15,7 +16,8 @@ client = MongoClient(MONGO_URI)
 db = client["hackyeahdb"]
 projects = db["projects"]
 counters = db["counters"]
-user = db["users"]
+users = db["users"]
+
 ### Autoincremental Field ###
 def get_next_id():
     counter = counters.find_one_and_update(
@@ -56,8 +58,25 @@ class Projet(BaseModel):
     date_added: str
     date_ended: str
     cost: int
+    user_name: str
+    user_id: str
     gathered_money: int
     funded_money: int 
+
+    class Config:
+        arbitrary_types_allowed = True
+        
+
+### check if user is admin ###
+def is_user_admin(id: str):
+    user = users.find_one({"_id": ObjectId(id)})
+    if user and user.get("role") == "Admin":
+        return True
+    return False
+
+def serialize_project(project):
+    project["_id"] = str(project["_id"])
+    return project
 
 @app.get("/")
 def root():
@@ -65,23 +84,40 @@ def root():
 
 @app.get("/get_projects", response_model=List[dict])
 def get_all_projects():
-    projects_list = list(projects.find({}, {"_id": 0}))  # Exclude the MongoDB _id field
+    projects_list = list(projects.find())  
+    projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
+
 
 @app.get("/get_projects/descending_by/")
 def get_all_projects(field: str):
     if field not in ["funded_money", "cost", "gathered_money"]:  # Add any other fields you want to allow sorting by
         raise HTTPException(status_code=400, detail="Invalid field for sorting")
     
-    projects_list = list(projects.find({}, {"_id": 0}).sort(field, -1))  # Sort by the provided field in descending order
+    projects_list = list(projects.find().sort(field, -1))
+    projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
 
 @app.get("/get_projects/ascending_by/")
-def get_all_projects(field: str):
+def get_all_projects(field: str = Query(...)):
     if field not in ["funded_money", "cost", "gathered_money"]:  # Add any other fields you want to allow sorting by
         raise HTTPException(status_code=400, detail="Invalid field for sorting")
-    
-    projects_list = list(projects.find({}, {"_id": 0}).sort(field, 1))  # Sort by the provided field in descending order
+    projects_list = list(projects.find().sort(field, 1))  # Sort by the provided field in descending order
+    projects_list = [serialize_project(project) for project in projects_list]
+    return projects_list
+
+@app.get("/get_project/{project_id}", response_model=dict)
+def get_project(project_id: str):
+    project = projects.find_one({"_id": ObjectId(project_id)})
+    if project:
+        return serialize_project(project)
+    else:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+@app.get("/get_projects_by_user/{user_id}", response_model=List[dict])
+def get_projects_by_user(user_id: str):
+    projects_list = list(projects.find({"user_id": user_id}))
+    projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
 
 @app.post("/add_project", response_model=dict)
@@ -93,8 +129,11 @@ def add_project(project: Projet):
         return {"message": "Project added successfully", "id": str(result.inserted_id)}
     else:
         raise HTTPException(status_code=500, detail="Failed to add project")
-
-
-
-
     
+@app.patch("/disable_project/{project_id}", response_model=dict)
+def disable_project(project_id: str):
+    project = projects.find_one({"_id": ObjectId(project_id)})
+    project["is_verified"] = False
+    if project:
+        projects.update_one({"_id": ObjectId(project_id)}, {"$set": project})
+        return {"message": "Project disabled successfully"}
