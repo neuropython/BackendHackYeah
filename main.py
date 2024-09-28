@@ -18,6 +18,7 @@ db = client["hackyeahdb"]
 projects = db["projects"]
 counters = db["counters"]
 users = db["users"]
+wallets = db["wallets"]
 histories = db["histories"]
 
 ### Autoincremental Field ###
@@ -86,25 +87,94 @@ def root():
 
 @app.get("/get_projects", response_model=List[dict])
 def get_all_projects():
+    """
+        Retrieve all projects from the database.
+
+        This endpoint retrieves all projects from the MongoDB collection and returns them as a list of dictionaries.
+        Each project dictionary includes the project's details, with the MongoDB ObjectId converted to a string.
+
+        Returns:
+            List[dict]: A list of dictionaries, each representing a project.
+        Example:
+        [
+        {
+            "_id": "66f86091c7006b2b170c9db2",
+            "title": "Neighborhood Playground Renovation",
+            "photo": "https://example.com/images/playground_renovation.jpg",
+            "category": "Sports and Recreation",
+            "abstract": "Renovating the old playground with new equipment and safety features.",
+            "detailed_desc": "The current playground is outdated and in need of new equipment. This project involves replacing old slides, swings, and adding new safety features such as soft ground mats to ensure children can play safely. We also plan to add a small section for younger children and a shaded seating area for parents.",
+            "location": "Elm Street Park, Neighborhood B",
+            "coordinates": "51.5074, -0.1278",
+            "is_verified": false,
+            "status_of_project": "project in progres",
+            "date_added": "2024-07-01",
+            "date_ended": "2024-12-01",
+            "cost": 15000,
+            "user_name": "test_username",
+            "user_id": "66f83be392c360b2cbedb66a",
+            "gathered_money": 8500,
+            "funded_money": 12000,
+            "ID": 9
+        }
+    ]
+    """
     projects_list = list(projects.find())  
     projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
 
+@app.get("/get_projects/{by_field}")
+def get_all_projects(by_field: str, field: str):
+    """
+    Retrieve all projects from the database, sorted by the specified field in either ascending or descending order.
 
-@app.get("/get_projects/descending_by/")
-def get_all_projects(field: str):
-    if field not in ["funded_money", "cost", "gathered_money"]:  # Add any other fields you want to allow sorting by
+    This endpoint retrieves all projects from the MongoDB collection and returns them as a list of dictionaries,
+    sorted by the specified field in either ascending or descending order. The field must be one of the allowed fields for sorting.
+
+    Args:
+        by_field (str): The order by which to sort the projects. Must be either "ascending_by" or "descending_by".
+        field (str): The field by which to sort the projects. Must be one of ["funded_money", "cost", "gathered_money"].
+
+    Returns:
+        List[dict]: A list of dictionaries, each representing a project, sorted by the specified field in the specified order.
+
+    Raises:
+        HTTPException: If the specified field is not one of the allowed fields for sorting, a 400 status code is returned.
+        HTTPException: If the specified order is not "ascending_by" or "descending_by", a 400 status code is returned.
+
+    Example:
+        Request:
+            GET /get_projects/descending_by/?field=funded_money
+
+        Response:
+            [
+                {
+                    "_id": "60d5f9b8f8d2f8b0c8b0c8b0",
+                    "name": "Project 1",
+                    "description": "Description of Project 1",
+                    "user_id": "60d5f9b8f8d2f8b0c8b0c8b1",
+                    "funded_money": 1000
+                },
+                {
+                    "_id": "60d5f9b8f8d2f8b0c8b0c8b2",
+                    "name": "Project 2",
+                    "description": "Description of Project 2",
+                    "user_id": "60d5f9b8f8d2f8b0c8b0c8b3",
+                    "funded_money": 500
+                }
+            ]
+    """
+    if field not in ["funded_money", "cost", "gathered_money"]:
         raise HTTPException(status_code=400, detail="Invalid field for sorting")
     
-    projects_list = list(projects.find().sort(field, -1))
-    projects_list = [serialize_project(project) for project in projects_list]
-    return projects_list
-
-@app.get("/get_projects/ascending_by/")
-def get_all_projects(field: str = Query(...)):
-    if field not in ["funded_money", "cost", "gathered_money"]:  # Add any other fields you want to allow sorting by
-        raise HTTPException(status_code=400, detail="Invalid field for sorting")
-    projects_list = list(projects.find().sort(field, 1))  # Sort by the provided field in descending order
+    if by_field == "descending_by":
+        sign = -1
+    elif by_field == "ascending_by":
+        sign = 1
+    else:
+        raise HTTPException(status_code=400, detail="Invalid order for sorting")
+    
+    projects_list = list(projects.find().sort(field, sign))
     projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
 
@@ -147,6 +217,25 @@ def disable_project(project_id: str):
     if project:
         projects.update_one({"_id": ObjectId(project_id)}, {"$set": project})
         return {"message": "Project disabled successfully"}
+    
+@app.patch("/pay_to_project/", response_model=dict)
+def enable_project(project_id: str = Query(...), payment_amount: int = Query(...)):
+    project = projects.find_one({"_id": ObjectId(project_id)})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project["gathered_money"] += payment_amount 
+    wallet = wallets.find_one({"user_id": ObjectId(project_id)})
+    print(wallet)
+    if not wallet:
+        raise HTTPException(status_code=404, detail="User wallet not found")
+    wallet["money_balance"] -= payment_amount
+    if wallet["money_balance"] < 0:
+        raise HTTPException(status_code=400, detail="Insufficient funds")
+    if project["gathered_money"] >= project["cost"]:
+        project["status_of_project"] = "project compleated"
+    projects.update_one({"_id": ObjectId(project_id)}, {"$set": project})
+    wallets.update_one({"user_id": project["user_id"]}, {"$set": wallet})
+    return {"message": "Payment successful"}
 
 
 @app.get("/get_favourite_categories/{user_id}", response_model=dict)
