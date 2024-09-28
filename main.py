@@ -17,7 +17,7 @@ db = client["hackyeahdb"]
 projects = db["projects"]
 counters = db["counters"]
 users = db["users"]
-wallets = db["wallet"]
+wallets = db["wallets"]
 
 ### Autoincremental Field ###
 def get_next_id():
@@ -210,13 +210,20 @@ def disable_project(project_id: str):
         return {"message": "Project disabled successfully"}
     
 @app.patch("/pay_to_project/", response_model=dict)
-def enable_project(project_id: str, payment_amount: int):
+def enable_project(project_id: str = Query(...), payment_amount: int = Query(...)):
     project = projects.find_one({"_id": ObjectId(project_id)})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
     project["gathered_money"] += payment_amount 
-    wallet = wallets.find_one({"user_id": project["user_id"]})
+    wallet = wallets.find_one({"user_id": ObjectId(project_id)})
+    print(wallet)
+    if not wallet:
+        raise HTTPException(status_code=404, detail="User wallet not found")
     wallet["money_balance"] -= payment_amount
     if wallet["money_balance"] < 0:
         raise HTTPException(status_code=400, detail="Insufficient funds")
     if project["gathered_money"] >= project["cost"]:
         project["status_of_project"] = "project compleated"
     projects.update_one({"_id": ObjectId(project_id)}, {"$set": project})
+    wallets.update_one({"user_id": project["user_id"]}, {"$set": wallet})
+    return {"message": "Payment successful"}
