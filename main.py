@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from enum import Enum
 from typing import List
 from bson import ObjectId
+from fastapi.requests import Request
 
 
 ### Database connection ###
@@ -108,13 +109,20 @@ def get_all_projects(field: str = Query(...)):
     return projects_list
 
 @app.get("/get_project/{project_id}", response_model=dict)
-def get_project(project_id: str):
+async def get_project(project_id: str, request: Request):
+    body = await request.json()
+    user_id = body.get("user_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User ID is required")
+
     project = projects.find_one({"_id": ObjectId(project_id)})
     if project:
-        add_to_history(project["user_id"], project["category"], histories, 1)
+        add_to_history(user_id, project["category"], histories, 1)
         return serialize_project(project)
     else:
         raise HTTPException(status_code=404, detail="Project not found")
+        
 
 @app.get("/get_projects_by_user/{user_id}", response_model=List[dict])
 def get_projects_by_user(user_id: str):
@@ -141,24 +149,29 @@ def disable_project(project_id: str):
         return {"message": "Project disabled successfully"}
 
 
+@app.get("/get_favourite_categories/{user_id}", response_model=dict)
+def get_favourite_categories(user_id: str):
+    return get_favourite_categories(ObjectId(user_id), histories, 3)
+
 def add_to_history(userId, category, histories, addCount):
-    history = histories.find_one({"user_id": userId})
+    history = histories.find_one({"user_id": ObjectId(userId)})
     if history:
         try:
             history[category] = history[category] + addCount
         except:
             history[category] = addCount
-        histories.update_one({"user_id": userId}, {"$set": history})
+        histories.update_one({"user_id": ObjectId(userId)}, {"$set": history})
     else:
-        history = {"user_id": userId}
+        history = {"user_id": ObjectId(userId)}
         history[category] = addCount
         histories.insert_one(history)
     return history
     
 def get_favourite_categories(userId, histories, count):
-    history = histories.find_one({"user_id": userId})
+    history = histories.find_one({"user_id": ObjectId(userId)})
     if history:
         history.pop("user_id")
+        history.pop("_id")
         return dict(sorted(history.items(), key=lambda item: item[1], reverse=True)[:count])
     else:
         return {}
