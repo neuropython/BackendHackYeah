@@ -17,6 +17,7 @@ db = client["hackyeahdb"]
 projects = db["projects"]
 counters = db["counters"]
 users = db["users"]
+histories = db["histories"]
 
 ### Autoincremental Field ###
 def get_next_id():
@@ -110,6 +111,7 @@ def get_all_projects(field: str = Query(...)):
 def get_project(project_id: str):
     project = projects.find_one({"_id": ObjectId(project_id)})
     if project:
+        add_to_history(project["user_id"], project["category"], histories, 1)
         return serialize_project(project)
     else:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -137,3 +139,26 @@ def disable_project(project_id: str):
     if project:
         projects.update_one({"_id": ObjectId(project_id)}, {"$set": project})
         return {"message": "Project disabled successfully"}
+
+
+def add_to_history(userId, category, histories, addCount):
+    history = histories.find_one({"user_id": userId})
+    if history:
+        try:
+            history[category] = history[category] + addCount
+        except:
+            history[category] = addCount
+        histories.update_one({"user_id": userId}, {"$set": history})
+    else:
+        history = {"user_id": userId}
+        history[category] = addCount
+        histories.insert_one(history)
+    return history
+    
+def get_favourite_categories(userId, histories, count):
+    history = histories.find_one({"user_id": userId})
+    if history:
+        history.pop("user_id")
+        return dict(sorted(history.items(), key=lambda item: item[1], reverse=True)[:count])
+    else:
+        return {}
