@@ -6,13 +6,20 @@ from typing import List
 from bson import ObjectId
 from fastapi.requests import Request
 import os
+from dotenv import load_dotenv
+
 
 ### Database connection ###
 
-PASSWORD = os.getenv("")
-USERNAME = os.getenv("") 
-MONGO_URI = "mongodb+srv://fastapi:123fastapi@hackyeah-db.3xvq7.mongodb.net/?retryWrites=true&w=majority&appName=hackyeah-db"
+load_dotenv()
 
+PASSWORD = os.getenv("password")
+USERNAME = os.getenv("user") 
+print(PASSWORD)
+print(USERNAME)
+MONGO_URI = f"mongodb+srv://{USERNAME}:{PASSWORD}@hackyeah-db.3xvq7.mongodb.net/?retryWrites=true&w=majority&appName=hackyeah-db"
+
+print(MONGO_URI)
 app = FastAPI()
 
 client = MongoClient(MONGO_URI)
