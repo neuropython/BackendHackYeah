@@ -7,7 +7,7 @@ from bson import ObjectId
 from fastapi.requests import Request
 import os
 from dotenv import load_dotenv
-
+from fastapi.middleware.cors import CORSMiddleware
 
 
 ### Database connection ###
@@ -22,6 +22,14 @@ MONGO_URI = f"mongodb+srv://{USERNAME}:{PASSWORD}@hackyeah-db.3xvq7.mongodb.net/
 
 print(MONGO_URI)
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 client = MongoClient(MONGO_URI)
 db = client["hackyeahdb"]
@@ -119,15 +127,14 @@ def get_all_projects(by_field: str, field: str):
     else:
         raise HTTPException(status_code=400, detail="Invalid order for sorting")
     
+    query = projects.find().sort(field, 1)
+
     projects_list = list(projects.find().sort(field, sign))
     projects_list = [serialize_project(project) for project in projects_list]
     return projects_list
 
 @app.get("/get_project/{project_id}", response_model=dict)
-async def get_project(project_id: str, request: Request):
-    body = await request.json()
-    user_id = body.get("user_id")
-    
+def get_project(project_id: str, user_id: str):
     if not user_id:
         raise HTTPException(status_code=400, detail="User ID is required")
 
