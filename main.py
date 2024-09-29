@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 
 
+
 ### Database connection ###
 
 load_dotenv()
@@ -238,3 +239,271 @@ def get_favourite_categories(userId, histories, count):
         return dict(sorted(history.items(), key=lambda item: item[1], reverse=True)[:count])
     else:
         return {}
+    
+
+
+
+import datetime
+from enum import Enum
+from gzip import READ
+from fastapi import FastAPI, HTTPException, Response
+from pydantic import BaseModel
+from pymongo.mongo_client import MongoClient
+from fastapi import status
+import secrets
+from openai import OpenAI
+
+OPENAI_API_KEY=os.environ.get("OPENAI_API_KEY")
+OPENAI_ORGANIZATION_ID="org-s0MEUTdIYlEUfLGXlECYOT63"
+
+
+client = OpenAI(
+    api_key=OPENAI_API_KEY
+)
+
+
+class TransactionType(str, Enum):
+    MONEY_DEPOSIT = "MONEY_DEPOSIT"
+    TOKEN_DEPOSIT = "TOKEN_DEPOSIT"
+    MONEY_PAYMENT = "MONEY_PAYMENT"
+    TOKEN_PAYMENT = "TOKEN_PAYMENT" 
+
+class ProjectPayment(BaseModel):
+    id : str = secrets.token_hex(nbytes=16)
+    transaction_type: TransactionType = TransactionType.MONEY_PAYMENT
+    project_id: str
+    amount: float
+    date: datetime.datetime = datetime.datetime.now()
+
+class MoneyDeposit(BaseModel):
+    id : str = secrets.token_hex(nbytes=16)
+    transaction_type: TransactionType = TransactionType.MONEY_DEPOSIT
+    amount: float
+    date: datetime.datetime = datetime.datetime.now()
+
+class TokenDeposit(BaseModel):
+    id : str = secrets.token_hex(nbytes=16)
+    transaction_type: TransactionType = TransactionType.TOKEN_DEPOSIT
+    amount: float 
+    date: datetime.datetime = datetime.datetime.now()
+
+class TokenPayment(BaseModel):
+    id : str = secrets.token_hex(nbytes=16)
+    transaction_type: TransactionType = TransactionType.TOKEN_PAYMENT
+    benefit_id: str
+    amount: float 
+    date: datetime.datetime = datetime.datetime.now()
+
+class Wallet(BaseModel):
+    user_id: str
+    money_balance:float = 0
+    toke_balance:float = 0
+    bank_number: str = ""
+    transaction_history: list =     []
+
+class VoteResponse(BaseModel):
+    upvotes: int
+    downvotes: int
+
+
+class DB:
+    _instance = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+
+    def __init__(self):
+        
+        self.client = MongoClient(MONGO_URI)
+        self.db = self.client['hackyeahdb']
+
+        try:
+            self.client.admin.command('ping')
+            print("Pinged your deployment. You successfully connected to MongoDB!")
+        except Exception as e:
+            print(e)
+
+    def get_vote_by_user_id(self, entity_id:str,  user_id:str):
+        collection = self.db['votes']
+        return collection.find_one({"$and" : [{"user_id" : user_id}, {"entity_id":entity_id}]}, {"_id":0})
+
+    def insert_vote(self, entity_id, user_id, value):
+        collection = self.db['votes']
+        collection.insert_one({"entity_id": entity_id, "user_id": user_id, "value": value})
+
+    def update_vote(self, entity_id, user_id, value):
+        collection = self.db['votes']
+        collection.update_one({"$and" : [{"user_id" : user_id}, {"entity_id":entity_id}]}, {"$set": {"value": value}})
+
+    def delete_vote(self, entity_id, user_id):
+        collection = self.db['votes']
+        collection.delete_one({"$and" : [{"user_id" : user_id}, {"entity_id":entity_id}]})
+
+    def create_wallet(self, user_id):
+        collection = self.db['wallets']
+
+        if not collection.find_one({"user_id": user_id}):
+            wallet = Wallet(user_id=user_id)
+            collection.insert_one(wallet.model_dump())
+            
+            return status.HTTP_201_CREATED
+        else:
+            return status.HTTP_409_CONFLICT
+
+    def get_wallet(self, user_id):
+        collection = self.db['wallets']
+        return collection.find_one({"user_id": user_id}, {"_id":0})
+    
+    def add_money(self, user_id, amount):
+        if amount < 0:
+            return          HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+        
+        collection = self.db['wallets']
+        wallet = collection.find_one({"user_id": user_id})
+        wallet['money_balance'] += amount
+        collection.update_one({"user_id": user_id}, {"$set": wallet})
+
+
+    def substract_money(self, user_id, amount):
+        if amount < 0:
+            return     HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+        
+        collection = self.db['wallets']
+        wallet = collection.find_one({"user_id": user_id})
+        if wallet['money_balance'] >= amount:
+            wallet['money_balance'] -= amount
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+
+        collection.update_one({"user_id": user_id}, {"$set": wallet})
+        
+        return status.HTTP_200_OK
+
+    def add_token(self, user_id, amount):
+        if amount < 0:
+            return              HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+        
+        collection = self.db['wallets']
+        wallet = collection.find_one({"user_id": user_id})
+        wallet['token_balance'] += amount
+        collection.update_one({"user_id": user_id}, {"$set": wallet})
+
+    def substract_token(self, user_id, amount):
+        if amount < 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+        
+        collection = self.db['wallets']
+        wallet = collection.find_one({"user_id": user_id})
+        if wallet['token_balance'] >= amount:
+            wallet['token_balance'] -= amount
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+
+        collection.update_one({"user_id": user_id}, {"$set": wallet})
+
+    def add_transaction(self, user_id, transaction: dict):
+        collection = self.db['wallets']
+        wallet = collection.find_one({"user_id": user_id})
+        # transaction.transaction_type = str(transaction.transaction_type)
+        print(transaction)
+        wallet['transaction_history'].append(transaction)
+        collection.update_one({"user_id": user_id}, {"$set": wallet})
+
+
+db = DB()
+
+@app.post("/vote/{entity_id}/{user_id}/{value}", tags=["vote"])
+def post_vote(entity_id: str, user_id: str, value: int) -> Response:
+    vote = db.get_vote_by_user_id(entity_id, user_id)
+    
+    if vote:
+        if vote['value'] == value:
+            db.delete_vote(entity_id, user_id)
+        if vote['value'] != value:
+            db.update_vote(entity_id, user_id, value)
+        
+
+        return status.HTTP_200_OK
+    else:
+        db.insert_vote(entity_id, user_id, value)
+    
+    return status.HTTP_201_CREATED
+
+@app.get("/vote/{entity_id}", tags=["vote"])
+def get_votes_count(entity_id:str) -> VoteResponse:
+    dct = {"upvotes": 0, "downvotes": 0}
+
+    collection = db.db['votes']
+    for vote in collection.find({"entity_id": entity_id}):
+        value = vote['value']
+        if value == 1:
+            dct['upvotes'] += 1
+        if value == -1:
+            dct['downvotes'] += 1             
+
+    return dct
+
+
+@app.post("/wallet/{user_id}", tags=["wallet"])
+def create_wallet(user_id:str) -> Response:
+    db.create_wallet(user_id)
+    return status.HTTP_201_CREATED
+
+
+@app.post("/wallet/{user_id}/add_money/{amount}", tags=["wallet"])
+def add_money(user_id:str, amount:float) -> Response:
+    db.add_money(user_id, amount)
+    db.add_transaction(user_id, MoneyDeposit(amount=amount).model_dump())
+    return status.HTTP_200_OK
+
+@app.post("/wallet/{user_id}/substract_money/{amount}", tags=["wallet"])
+def substract_money(user_id:str, amount:float) -> Response:
+    db.substract_money(user_id, amount)
+    return status.HTTP_200_OK
+
+
+@app.post("/wallet/{user_id}/add_token/{amount}", tags=["wallet"])
+def add_token(user_id:str, amount:float) -> Response:
+    db.add_token(user_id, amount)
+    db.add_transaction(user_id, TokenDeposit(amount=amount).model_dump())
+    return status.HTTP_200_OK
+
+@app.post("/wallet/{user_id}/substract_token/{amount}", tags=["wallet"])
+def substract_token(user_id:str, amount:float) -> Response:
+    db.substract_token(user_id, amount)
+    return status.HTTP_200_OK
+
+@app.get("/wallet/{user_id}", tags=["wallet"])
+def get_wallet(user_id:str) -> Wallet:
+    return db.get_wallet(user_id)
+
+class AiResponse(BaseModel):
+    grade: int
+    corrected_text: str
+
+@app.post("/ai", tags=['ai'])
+def ai(text: str) -> AiResponse:
+
+
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Zweryfikuj podane podanie pod względem poprawności językowej i oficjalności, wszystkie niecenzuralne slowa obnizaja ocene do 0. zwróć w pierwszej linii tylko liczbę, ocenę w skali od 1 do 100.
+                w następnej linii wypisz tylko poprawioną wersję: {text}""",
+            }
+        ],
+        model="gpt-4o",
+    )
+
+    grade = chat_completion.choices[0].message.content.split("\n")[0]
+    corrected_text = "".join(chat_completion.choices[0].message.content.split("\n")[1:])
+
+    return {"grade": grade, "corrected_text": corrected_text}
