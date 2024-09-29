@@ -5,17 +5,19 @@ from enum import Enum
 from typing import List
 from bson import ObjectId
 from fastapi.requests import Request
-
+import os
 
 ### Database connection ###
 
+PASSWORD = os.getenv("")
+USERNAME = os.getenv("") 
 MONGO_URI = "mongodb+srv://fastapi:123fastapi@hackyeah-db.3xvq7.mongodb.net/?retryWrites=true&w=majority&appName=hackyeah-db"
 
 app = FastAPI()
 
 client = MongoClient(MONGO_URI)
 db = client["hackyeahdb"]
-projects = db["projects"]
+projects = db["projects1"]
 counters = db["counters"]
 users = db["users"]
 wallets = db["wallets"]
@@ -44,9 +46,8 @@ class NeighborhoodProjectCategory(str, Enum):
     SUSTAINABILITY = "Sustainability" 
 
 class SatusOfProject(str, Enum):
-    COMPLEATED = "project compleated"
-    IN_PROGRRES = "project in progres"
-    
+    COMPLEATED = "Completed"
+    IN_PROGRRES = "Pending"
 
 ### Models ###
 class Projet(BaseModel):
@@ -55,7 +56,7 @@ class Projet(BaseModel):
     category: NeighborhoodProjectCategory
     abstract: str 
     detailed_desc: str 
-    location: str 
+    location: str
     coordinates: str 
     is_verified: bool
     status_of_project: SatusOfProject
@@ -63,12 +64,12 @@ class Projet(BaseModel):
     date_ended: str
     cost: int
     user_name: str
-    user_id: ObjectId
+    user_id: str
     gathered_money: int
     funded_money: int 
 
     class Config:
-        arbitrary_types_allowed = True
+        arbitrary_types_allowed=True
         
 
 ### check if user is admin ###
@@ -115,8 +116,8 @@ def get_all_projects(by_field: str, field: str):
     return projects_list
 
 @app.get("/get_project/{project_id}", response_model=dict)
-def get_project(project_id: str, request: Request):
-    body = request.json()
+async def get_project(project_id: str, request: Request):
+    body = await request.json()
     user_id = body.get("user_id")
     
     if not user_id:
@@ -204,9 +205,6 @@ def verify_project(project_id: str):
     else:
         raise HTTPException(status_code=404, detail="Project not found")
     
-
-
-
 @app.get("/get_favourite_categories/{user_id}", response_model=dict)
 def get_favourite_categories(user_id: str):
     return get_favourite_categories(ObjectId(user_id), histories, 3)
